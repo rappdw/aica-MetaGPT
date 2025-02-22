@@ -19,7 +19,7 @@ class LLMConfig(BaseModel):
     
     # Bedrock settings
     bedrock_model_id: str = Field(
-        "anthropic.claude-3-sonnet-20240229-v2:0",  # Updated to V2
+        "us.anthropic.claude-3-5-sonnet-20241022-v2:0",  # Default Bedrock Claude model
         description="Bedrock model ID"
     )
     bedrock_region: str = Field("us-east-1", description="AWS region for Bedrock")

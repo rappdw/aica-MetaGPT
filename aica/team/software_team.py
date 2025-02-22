@@ -8,9 +8,9 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.markdown import Markdown
 
-from aica.core.base import LLMProvider
-from aica.core.config import Config
 from aica.core.workspace import Workspace
+from aica.core.base import LLMProvider
+from aica.core.config import Config, LLMConfig
 from aica.team.roles import (
     Architect,
     CodeReviewer,
@@ -36,16 +36,33 @@ class SoftwareTeam:
         self.prompt = prompt
         self.config = config or {}
         
-        # Initialize roles
+        # Get LLM provider
+        llm_config = self.config.get("llm", {})
+        llm_config = LLMConfig(**llm_config) if llm_config else LLMConfig()
+        self.llm = llm_config.get_provider()
+        
+        if not self.llm:
+            raise ValueError("No LLM provider configured. Please check your configuration.")
+        
+        # Initialize roles with LLM
         self.project_manager = ProjectManager()
+        self.project_manager.set_llm(self.llm)
+        
         self.architect = Architect()
+        self.architect.set_llm(self.llm)
+        
         self.tech_lead = TechLead()
-        self.developers = [
-            Developer(name=f"dev_{i+1}")
-            for i in range(self.config.get("num_developers", 3))
-        ]
+        self.tech_lead.set_llm(self.llm)
+        
+        self.developers = [Developer() for _ in range(self.config.get("num_developers", 3))]
+        for dev in self.developers:
+            dev.set_llm(self.llm)
+        
         self.code_reviewer = CodeReviewer()
+        self.code_reviewer.set_llm(self.llm)
+        
         self.qa_engineer = QAEngineer()
+        self.qa_engineer.set_llm(self.llm)
         
         # Token tracking
         self.token_usage = {
