@@ -91,6 +91,31 @@ class Action(BaseModel):
     def set_llm(self, llm: LLMProvider) -> None:
         """Set the LLM provider for this action."""
         self.llm = llm
+    
+    def _parse_json_response(self, response: str) -> Dict:
+        """Parse JSON response from LLM, with error handling."""
+        import json
+        
+        # Try to find JSON block if response contains markdown
+        if "```json" in response:
+            start = response.find("```json") + 7
+            end = response.find("```", start)
+            if end != -1:
+                response = response[start:end].strip()
+        elif "```" in response:
+            start = response.find("```") + 3
+            end = response.find("```", start)
+            if end != -1:
+                response = response[start:end].strip()
+        
+        try:
+            return json.loads(response)
+        except json.JSONDecodeError as e:
+            # If parsing fails, return error in expected format
+            return {
+                "error": f"Failed to parse JSON response: {str(e)}",
+                "raw_response": response
+            }
 
 
 class Role(BaseModel):

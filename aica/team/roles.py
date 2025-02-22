@@ -6,6 +6,14 @@ import json
 from pydantic import BaseModel, ConfigDict, Field
 
 from aica.core.base import Action, LLMProvider, Role
+from aica.team.actions import (
+    AnalyzeRequirements,
+    CreateProjectStructure,
+    ImplementFeature,
+    ReviewCode,
+    ReviewIntegration,
+    RunTests
+)
 
 
 class AnalyzeRequirements(Action):
@@ -297,7 +305,10 @@ class Architect(BaseRole):
     
     def __init__(self):
         super().__init__()
-        self.actions = [CreateProjectStructure()]
+        self.actions = [
+            CreateProjectStructure(),
+            ReviewIntegration()
+        ]
 
 
 class TechLead(BaseRole):
