@@ -12,6 +12,7 @@ from aica.team.actions import (
     ImplementFeature,
     ReviewCode,
     ReviewIntegration,
+    ReviewRequirements,
     RunTests
 )
 
@@ -56,7 +57,7 @@ class AnalyzeRequirements(Action):
         Do not include any explanatory text before or after the JSON.
         """
         try:
-            result = await self.llm.aask(prompt)
+            result = await self._call_llm(prompt)
             if isinstance(result, str):
                 result = json.loads(result)
             return {"specification": result}
@@ -106,7 +107,7 @@ class CreateProjectStructure(Action):
         Do not include any explanatory text before or after the JSON.
         """
         try:
-            result = await self.llm.aask(prompt)
+            result = await self._call_llm(prompt)
             if isinstance(result, str):
                 result = json.loads(result)
             return {"project_structure": result}
@@ -155,7 +156,7 @@ class ImplementFeature(Action):
         Do not include any explanatory text before or after the JSON.
         """
         try:
-            result = await self.llm.aask(prompt)
+            result = await self._call_llm(prompt)
             if isinstance(result, str):
                 result = json.loads(result)
             return result
@@ -206,7 +207,7 @@ class ReviewCode(Action):
         Do not include any explanatory text before or after the JSON.
         """
         try:
-            result = await self.llm.aask(prompt)
+            result = await self._call_llm(prompt)
             if isinstance(result, str):
                 result = json.loads(result)
             return {"review": result}
@@ -262,7 +263,7 @@ class RunTests(Action):
         Do not include any explanatory text before or after the JSON.
         """
         try:
-            result = await self.llm.aask(prompt)
+            result = await self._call_llm(prompt)
             if isinstance(result, str):
                 result = json.loads(result)
             return {"test_files": result}
@@ -281,71 +282,97 @@ class RunTests(Action):
             }
 
 
-class BaseRole(Role):
+class BaseRole(BaseModel):
     """Base class for all roles with LLM support."""
-    llm: Optional[Any] = None
+    name: str
+    profile: str
+    llm: Optional[LLMProvider] = None
+    actions: List[Action] = Field(default_factory=list)
     
     model_config = ConfigDict(arbitrary_types_allowed=True)
+    
+    def set_llm(self, llm: LLMProvider) -> None:
+        """Set the LLM provider for this role and all its actions."""
+        self.llm = llm
+        for action in self.actions:
+            action.set_llm(llm)
+    
+    async def run(self, action_name: str, **kwargs) -> Dict[str, Any]:
+        """Run an action by name."""
+        # Find the action instance by name
+        action = next((a for a in self.actions if a.name == action_name), None)
+        if not action:
+            available_actions = [a.name for a in self.actions]
+            raise ValueError(f"Action {action_name} not found. Available actions: {available_actions}")
+        
+        # Run the action
+        return await action.run(**kwargs)
 
 
 class ProjectManager(BaseRole):
     """Manages the overall project and coordinates between roles."""
-    name: str = "Project Manager"
-    profile: str = "Experienced project manager who coordinates the development process"
-    
     def __init__(self):
-        super().__init__()
-        self.actions = [AnalyzeRequirements()]
+        super().__init__(
+            name="Project Manager",
+            profile="Experienced project manager who coordinates the development process",
+            actions=[
+                AnalyzeRequirements(),
+                ReviewRequirements()
+            ]
+        )
 
 
 class Architect(BaseRole):
     """Designs the system architecture and makes high-level technical decisions."""
-    name: str = "Architect"
-    profile: str = "Senior software architect who designs system architecture"
-    
     def __init__(self):
-        super().__init__()
-        self.actions = [
-            CreateProjectStructure(),
-            ReviewIntegration()
-        ]
+        super().__init__(
+            name="Architect",
+            profile="Senior software architect who designs system architecture",
+            actions=[
+                CreateProjectStructure(),
+                ReviewIntegration()
+            ]
+        )
 
 
 class TechLead(BaseRole):
     """Makes technical decisions and guides implementation."""
-    name: str = "Tech Lead"
-    profile: str = "Senior developer who guides technical implementation"
-    
     def __init__(self):
-        super().__init__()
-        self.actions = [ImplementFeature()]
+        super().__init__(
+            name="Tech Lead",
+            profile="Senior developer who guides technical implementation",
+            actions=[
+                ReviewRequirements(),
+                ImplementFeature()
+            ]
+        )
 
 
 class Developer(BaseRole):
     """Implements code based on specifications and architecture."""
-    name: str = "Developer"
-    profile: str = "Software developer who implements features"
-    
     def __init__(self):
-        super().__init__()
-        self.actions = [ImplementFeature()]
+        super().__init__(
+            name="Developer",
+            profile="Software developer who implements features",
+            actions=[ImplementFeature()]
+        )
 
 
 class CodeReviewer(BaseRole):
     """Reviews code and ensures quality standards."""
-    name: str = "Code Reviewer"
-    profile: str = "Senior developer who reviews code and ensures quality"
-    
     def __init__(self):
-        super().__init__()
-        self.actions = [ReviewCode()]
+        super().__init__(
+            name="Code Reviewer",
+            profile="Senior developer who reviews code and ensures quality",
+            actions=[ReviewCode()]
+        )
 
 
 class QAEngineer(BaseRole):
     """Tests implementations and ensures quality."""
-    name: str = "QA Engineer"
-    profile: str = "Quality assurance engineer who tests implementations"
-    
     def __init__(self):
-        super().__init__()
-        self.actions = [RunTests()]
+        super().__init__(
+            name="QA Engineer",
+            profile="Quality assurance engineer who tests implementations",
+            actions=[RunTests()]
+        )

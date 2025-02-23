@@ -34,7 +34,7 @@ class AnalyzeRequirements(Action):
         - risks: List of risks and mitigations
         """
         
-        response = await self.llm.aask(prompt)
+        response = await self._call_llm(prompt)
         return self._parse_json_response(response)
 
 
@@ -63,7 +63,7 @@ class CreateProjectStructure(Action):
         - configuration: Configuration settings
         """
         
-        response = await self.llm.aask(prompt)
+        response = await self._call_llm(prompt)
         return self._parse_json_response(response)
 
 
@@ -95,7 +95,7 @@ class ImplementFeature(Action):
         - integration: Integration notes
         """
         
-        response = await self.llm.aask(prompt)
+        response = await self._call_llm(prompt)
         return self._parse_json_response(response)
 
 
@@ -124,7 +124,7 @@ class ReviewCode(Action):
         - approved: Boolean indicating if code is approved
         """
         
-        response = await self.llm.aask(prompt)
+        response = await self._call_llm(prompt)
         return self._parse_json_response(response)
 
 
@@ -139,34 +139,111 @@ class ReviewIntegration(Action):
         requirements: Dict
     ) -> Dict:
         """Review integration of batch implementations with existing code."""
+        # Validate inputs
+        if not batch_implementations:
+            return {
+                "approved": False,
+                "conflicts": [
+                    "No implementations provided to review - batch_implementations is empty"
+                ],
+                "input_tokens": 0,
+                "output_tokens": 0
+            }
+        
+        # Format implementations for review
+        batch_summary = "\n".join(
+            f"- {impl.get('feature', 'unknown')}: {len(impl.get('implementation', {}).get('files', {}))} files"
+            for impl in batch_implementations
+        )
+        
+        previous_summary = "\n".join(
+            f"- {impl.get('feature', 'unknown')}: {len(impl.get('implementation', {}).get('files', {}))} files"
+            for impl in previous_implementations
+        ) if previous_implementations else "No previous implementations"
+        
+        # Create review prompt
         prompt = f"""
         You are an architect reviewing the integration of multiple implementations.
         
         New implementations to integrate:
-        {batch_implementations}
+        {batch_summary}
         
         Previous implementations:
-        {previous_implementations}
+        {previous_summary}
         
         Requirements:
         {requirements}
         
         Review the integration for:
-        1. Interface compatibility
-        2. Dependency management
-        3. Potential conflicts
-        4. Integration test coverage
+        1. Dependencies between components
+        2. Interface compatibility
+        3. Architectural consistency
+        4. Potential conflicts
         
-        Format your response as JSON with these keys:
-        - conflicts: List of identified conflicts
-        - dependencies: List of dependency issues
-        - test_coverage: Integration test coverage analysis
-        - success: Boolean indicating if integration is successful
-        - feedback: Detailed feedback and recommendations
+        Provide a detailed review in JSON format with:
+        - approved: boolean indicating if integration can proceed
+        - conflicts: list of any conflicts found
+        - recommendations: list of suggestions for improving integration
         """
         
-        response = await self.llm.aask(prompt)
-        return self._parse_json_response(response)
+        return await self._call_llm(prompt)
+
+
+class ReviewRequirements(Action):
+    """Review and validate requirements analysis."""
+    name: str = "ReviewRequirements"
+    
+    async def run(
+        self,
+        requirements: Dict,
+        implementation: Dict,
+        original_prompt: Optional[str] = None
+    ) -> Dict:
+        """Review requirements for completeness, clarity, feasibility, consistency, and testability.
+        
+        Args:
+            requirements: Requirements analysis to review
+            implementation: Current implementation details
+            original_prompt: Original user prompt/requirements (optional)
+        """
+        # Format the review prompt
+        prompt = f"""
+        You are a senior software architect reviewing requirements implementation.
+        
+        Original Requirements:
+        {original_prompt if original_prompt else "Not provided"}
+        
+        Requirements Analysis:
+        {requirements}
+        
+        Current Implementation:
+        {implementation}
+        
+        Review the implementation against requirements for:
+        1. Completeness:
+           - All functional requirements are implemented
+           - Non-functional requirements are satisfied
+           - No missing critical features
+        2. Correctness:
+           - Implementation matches requirements
+           - No deviations from specifications
+           - Edge cases are handled
+        3. Quality:
+           - Code follows best practices
+           - Proper error handling
+           - Sufficient test coverage
+        
+        Provide your review in JSON format with:
+        {{
+            "approved": boolean indicating if implementation satisfies requirements,
+            "missing_requirements": ["List of requirements not fully implemented"],
+            "deviations": ["List of implementations that deviate from requirements"],
+            "quality_issues": ["List of quality concerns"],
+            "recommendations": ["List of improvement suggestions"]
+        }}
+        """
+        
+        return await self._call_llm(prompt)
 
 
 class RunTests(Action):
@@ -195,5 +272,5 @@ class RunTests(Action):
         - passed: Boolean indicating if all tests passed
         """
         
-        response = await self.llm.aask(prompt)
+        response = await self._call_llm(prompt)
         return self._parse_json_response(response)

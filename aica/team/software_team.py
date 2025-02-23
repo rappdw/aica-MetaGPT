@@ -84,14 +84,45 @@ class SoftwareTeam:
     
     async def _run_action(self, role: Any, action: str, **kwargs) -> Dict:
         """Run an action and track its token usage."""
-        result = await role.run(action, **kwargs)
-        
-        # Extract token usage if available
-        input_tokens = result.pop("input_tokens", 0) if isinstance(result, dict) else 0
-        output_tokens = result.pop("output_tokens", 0) if isinstance(result, dict) else 0
-        
-        self._track_tokens(action, role.__class__.__name__, input_tokens, output_tokens)
-        return result
+        try:
+            # Run the action
+            start_time = datetime.now()
+            result = await role.run(action, **kwargs)
+            end_time = datetime.now()
+
+            # Track token usage
+            input_tokens = 0
+            output_tokens = 0
+            
+            # Extract token counts from result, handling both dict and non-dict cases
+            if isinstance(result, dict):
+                input_tokens = result.get("input_tokens", 0)
+                output_tokens = result.get("output_tokens", 0)
+            else:
+                # For non-dict responses, try to get token counts from response wrapper
+                response_wrapper = getattr(result, "__dict__", {})
+                input_tokens = response_wrapper.get("input_tokens", 0)
+                output_tokens = response_wrapper.get("output_tokens", 0)
+            
+            self._track_tokens(action, role.__class__.__name__, input_tokens, output_tokens)
+
+            # Log token usage
+            print(f"\nToken Usage for {action}:")
+            print(f"- Input tokens: {input_tokens}")
+            print(f"- Output tokens: {output_tokens}")
+            print(f"- Duration: {end_time - start_time}\n")
+
+            return result
+        except Exception as e:
+            # Even on error, try to track any tokens that were used
+            if isinstance(e, dict):  # Some actions return error as dict
+                input_tokens = e.get("input_tokens", 0)
+                output_tokens = e.get("output_tokens", 0)
+                self._track_tokens(action, role.__class__.__name__, input_tokens, output_tokens)
+                print(f"\nToken Usage before error in {action}:")
+                print(f"- Input tokens: {input_tokens}")
+                print(f"- Output tokens: {output_tokens}\n")
+            raise  # Re-raise the exception
 
     def _save_json_artifact(self, path: str, content: Union[str, Dict]) -> None:
         """Save JSON artifact, ensuring proper formatting."""
@@ -383,40 +414,39 @@ class SoftwareTeam:
                         "\n".join(f"- `{f}`" for f in sorted(feature_files_created))
                     )
             
-            # Add batch implementations to overall implementations
-            implementations.extend(batch_implementations)
-            
-            if batch_num < len(feature_batches):
-                # Review and integrate batch before moving to next one
+            # After implementing batch features, review their integration
+            if batch_implementations:
                 self._show_status(
-                    f"Batch {batch_num} Integration",
-                    "Reviewing and integrating batch implementation:\n"
-                    "- Checking for dependencies\n"
-                    "- Verifying interfaces\n"
-                    "- Running integration tests"
+                    f"Reviewing Batch {batch_num} Integration",
+                    f"Architect reviewing integration of {len(batch_implementations)} features:\n" +
+                    "\n".join(f"- {impl.get('feature', 'unknown')}" for impl in batch_implementations)
                 )
                 
                 integration_review = await self._run_action(
                     self.architect,
                     "ReviewIntegration",
                     batch_implementations=batch_implementations,
-                    previous_implementations=implementations[:-len(batch_implementations)],
-                    requirements=requirements_analysis
+                    previous_implementations=implementations,  # Pass all previous implementations
+                    requirements=requirements_analysis  # Pass full requirements context
                 )
                 
-                if not integration_review.get("success", False):
+                if not integration_review.get("approved", False):
+                    conflicts = integration_review.get("conflicts", [])
                     raise ValueError(
-                        f"Failed to integrate batch {batch_num}: " +
-                        integration_review.get("feedback", "Integration issues detected")
+                        f"Failed to integrate batch {batch_num}:\n\n"
+                        f"Critical conflicts:\n" +
+                        "\n".join(f"- {conflict}" for conflict in conflicts)
                     )
                 
-                self._show_status(
-                    f"Batch {batch_num} Complete",
-                    "✅ Successfully implemented and integrated batch:\n" +
-                    "\n".join(f"- {f.get('name', f) if isinstance(f, dict) else f}" 
-                             for f in feature_batch)
+                # Add successful batch implementations to our total implementations
+                implementations.extend(batch_implementations)
+                
+                # Save integration review
+                self._save_json_artifact(
+                    f"docs/integration_review_batch_{batch_num}.json",
+                    integration_review
                 )
-
+        
         # 5. Code Reviewer reviews implementations
         self._show_status(
             "Code Review",
@@ -514,51 +544,74 @@ class SoftwareTeam:
         pm_validation = await self._run_action(
             self.project_manager,
             "ReviewRequirements",
-            prompt=self.prompt,
             requirements=requirements_analysis,
             implementation={
                 "core": core_implementation,
                 "features": implementations,
                 "test_results": test_results
-            }
+            },
+            original_prompt=self.prompt
         )
 
-        if not pm_validation.get("complete", False):
+        if not pm_validation.get("approved", False):
             missing_reqs = pm_validation.get("missing_requirements", [])
+            deviations = pm_validation.get("deviations", [])
+            quality_issues = pm_validation.get("quality_issues", [])
+            
+            error_details = []
             if missing_reqs:
+                error_details.append("Missing Requirements:\n" + "\n".join(f"- {req}" for req in missing_reqs))
+            if deviations:
+                error_details.append("Implementation Deviations:\n" + "\n".join(f"- {dev}" for dev in deviations))
+            if quality_issues:
+                error_details.append("Quality Issues:\n" + "\n".join(f"- {issue}" for issue in quality_issues))
+            
+            if error_details:
                 self._show_status(
-                    "Missing Requirements",
-                    "The following requirements were not fully implemented:\n" +
-                    "\n".join(f"- {req}" for req in missing_reqs)
+                    "Validation Failed",
+                    "\n\n".join(error_details)
                 )
+            
             raise ValueError(
-                "Implementation does not fully satisfy business requirements. " +
-                pm_validation.get("feedback", "Please review the requirements and implementation.")
+                "Implementation does not fully satisfy business requirements.\n" +
+                "\n".join(error_details)
             )
 
         # Architect validates technical implementation
         arch_validation = await self._run_action(
             self.architect,
-            "ReviewArchitecture",
+            "ReviewRequirements",
             requirements=requirements_analysis,
             implementation={
                 "core": core_implementation,
                 "features": implementations,
                 "test_results": test_results
-            }
+            },
+            original_prompt=self.prompt
         )
 
         if not arch_validation.get("approved", False):
-            tech_issues = arch_validation.get("issues", [])
-            if tech_issues:
+            missing_reqs = arch_validation.get("missing_requirements", [])
+            deviations = arch_validation.get("deviations", [])
+            quality_issues = arch_validation.get("quality_issues", [])
+            
+            error_details = []
+            if missing_reqs:
+                error_details.append("Missing Technical Requirements:\n" + "\n".join(f"- {req}" for req in missing_reqs))
+            if deviations:
+                error_details.append("Technical Deviations:\n" + "\n".join(f"- {dev}" for dev in deviations))
+            if quality_issues:
+                error_details.append("Technical Quality Issues:\n" + "\n".join(f"- {issue}" for issue in quality_issues))
+            
+            if error_details:
                 self._show_status(
-                    "Technical Issues",
-                    "The following technical issues were identified:\n" +
-                    "\n".join(f"- {issue}" for issue in tech_issues)
+                    "Technical Validation Failed",
+                    "\n\n".join(error_details)
                 )
+            
             raise ValueError(
-                "Implementation does not meet technical requirements. " +
-                arch_validation.get("feedback", "Please review the architecture and implementation.")
+                "Implementation does not meet technical requirements.\n" +
+                "\n".join(error_details)
             )
 
         # Save validation results
