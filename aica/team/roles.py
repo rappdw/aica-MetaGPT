@@ -10,6 +10,7 @@ from aica.team.actions import (
     AnalyzeRequirements,
     CreateProjectStructure,
     ImplementFeature,
+    PlanWork,
     ReviewCode,
     ReviewIntegration,
     ReviewRequirements,
@@ -376,7 +377,8 @@ class ProjectManager(BaseRole):
             profile="Experienced project manager who coordinates the development process",
             actions=[
                 AnalyzeRequirements(),
-                ReviewRequirements()
+                ReviewRequirements(),
+                PlanWork()
             ]
         )
 
@@ -396,14 +398,15 @@ class Architect(BaseRole):
 
 
 class TechLead(BaseRole):
-    """Makes technical decisions and guides implementation."""
+    """Technical lead who guides implementation and reviews code."""
     def __init__(self):
         super().__init__(
             name="Tech Lead",
-            profile="Senior developer who guides technical implementation",
+            profile="Senior developer who guides implementation and reviews code",
             actions=[
-                ReviewRequirements(),
-                ImplementFeature()
+                ImplementFeature(),
+                ReviewCode(),
+                ReviewRequirements()
             ]
         )
 
@@ -429,10 +432,13 @@ class CodeReviewer(BaseRole):
 
 
 class QAEngineer(BaseRole):
-    """Tests implementations and ensures quality."""
+    """Quality assurance engineer who tests implementations."""
     def __init__(self):
         super().__init__(
             name="QA Engineer",
-            profile="Quality assurance engineer who tests implementations",
-            actions=[RunTests()]
+            profile="Quality assurance engineer who tests and verifies implementations",
+            actions=[
+                RunTests(),
+                ReviewRequirements()
+            ]
         )

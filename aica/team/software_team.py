@@ -54,15 +54,18 @@ class SoftwareTeam:
         self.tech_lead = TechLead()
         self.tech_lead.set_llm(self.llm)
         
-        self.developers = [Developer() for _ in range(self.config.get("num_developers", 3))]
+        # Initialize multiple developers
+        self.developers = [
+            Developer() for _ in range(2)  # Start with 2 developers
+        ]
         for dev in self.developers:
             dev.set_llm(self.llm)
+            
+        self.qa_engineer = QAEngineer()
+        self.qa_engineer.set_llm(self.llm)
         
         self.code_reviewer = CodeReviewer()
         self.code_reviewer.set_llm(self.llm)
-        
-        self.qa_engineer = QAEngineer()
-        self.qa_engineer.set_llm(self.llm)
         
         # Token tracking
         self.token_usage = {
@@ -199,6 +202,132 @@ class SoftwareTeam:
             expand=False
         ))
         console.print()
+
+    async def _handle_integration_issues(self, review_result: Dict, requirements: Dict) -> None:
+        """Handle integration issues by creating work items and dispatching to team."""
+        if not review_result.get("conflicts"):
+            return
+            
+        # Get work items from review
+        work_items = review_result.get("new_work_items", [])
+        
+        # If no specific work items were created, create generic ones from conflicts
+        if not work_items:
+            work_items = [{
+                "title": f"Fix Integration Issue: {conflict}",
+                "description": conflict,
+                "priority": "High",
+                "dependencies": [],
+                "estimated_effort": 3
+            } for conflict in review_result["conflicts"]]
+            
+        # Have project manager plan the work
+        plan = await self._run_action(
+            self.project_manager,
+            "PlanWork",
+            work_items=work_items
+        )
+        
+        # Process each sprint in order
+        for sprint_num in sorted(plan.get("sprints", {}).keys()):
+            sprint_items = plan["sprints"][sprint_num]
+            
+            # Create batch of implementations for this sprint
+            batch_implementations = []
+            
+            for item in sprint_items:
+                # Determine appropriate role based on work item
+                if "test" in item.lower():
+                    role = self.qa_engineer
+                elif any(kw in item.lower() for kw in ["implement", "create", "add", "build"]):
+                    role = self.developers[0]  # Assign to first available developer
+                else:
+                    role = self.tech_lead
+                    
+                # Have role implement the feature
+                self._show_status(
+                    f"Sprint {sprint_num} Implementation",
+                    f"Implementing: {item}"
+                )
+                
+                implementation = await self._run_action(
+                    role,
+                    "ImplementFeature",
+                    feature=item,
+                    spec=requirements
+                )
+                
+                if implementation:
+                    batch_implementations.append({
+                        "feature": item,
+                        "implementation": implementation
+                    })
+            
+            # Have tech lead review the implementations
+            if batch_implementations:
+                self._show_status(
+                    f"Sprint {sprint_num} Code Review",
+                    "Tech Lead reviewing implementations:\n" +
+                    "\n".join(f"- {impl['feature']}" for impl in batch_implementations)
+                )
+                
+                for impl in batch_implementations:
+                    # Review each implementation
+                    review = await self._run_action(
+                        self.tech_lead,
+                        "ReviewCode",
+                        code=impl["implementation"].get("code", ""),
+                        context={
+                            "feature": impl["feature"],
+                            "requirements": requirements
+                        }
+                    )
+                    
+                    # Save review artifacts
+                    self._save_json_artifact(
+                        f"docs/code_review_{impl['feature'].lower().replace(' ', '_')}.json",
+                        review
+                    )
+                
+                # Run tests
+                self._show_status(
+                    f"Sprint {sprint_num} Testing",
+                    "QA Engineer running tests"
+                )
+                
+                test_results = await self._run_action(
+                    self.qa_engineer,
+                    "RunTests",
+                    implementations=batch_implementations
+                )
+                
+                # Save test results
+                self._save_json_artifact(
+                    f"docs/test_results_sprint_{sprint_num}.json",
+                    test_results
+                )
+
+    async def _run_integration_review(
+        self,
+        batch_implementations: List[Dict],
+        previous_implementations: List[Dict],
+        requirements: Dict
+    ) -> Dict:
+        """Run integration review and handle any issues."""
+        # Run the review
+        review_result = await self._run_action(
+            self.architect,
+            "ReviewIntegration",
+            batch_implementations=batch_implementations,
+            previous_implementations=previous_implementations,
+            requirements=requirements
+        )
+        
+        # If there are conflicts, handle them by creating and implementing work items
+        if review_result.get("conflicts"):
+            await self._handle_integration_issues(review_result, requirements)
+            
+        return review_result
 
     async def run(self, spec: dict):
         """Run the software development process."""
@@ -454,16 +583,14 @@ class SoftwareTeam:
                     "\n".join(f"- {impl.get('feature', 'unknown')}" for impl in batch_implementations)
                 )
                 
-                integration_review = await self._run_action(
-                    self.architect,
-                    "ReviewIntegration",
-                    batch_implementations=batch_implementations,
-                    previous_implementations=implementations,  # Pass all previous implementations
-                    requirements=requirements_analysis  # Pass full requirements context
+                review_result = await self._run_integration_review(
+                    batch_implementations,
+                    implementations,
+                    requirements_analysis
                 )
                 
-                if not integration_review.get("approved", False):
-                    conflicts = integration_review.get("conflicts", [])
+                if not review_result.get("approved", False):
+                    conflicts = review_result.get("conflicts", [])
                     raise ValueError(
                         f"Failed to integrate batch {batch_num}:\n\n"
                         f"Critical conflicts:\n" +
@@ -476,7 +603,7 @@ class SoftwareTeam:
                 # Save integration review
                 self._save_json_artifact(
                     f"docs/integration_review_batch_{batch_num}.json",
-                    integration_review
+                    review_result
                 )
         
         # 5. Code Reviewer reviews implementations
@@ -500,7 +627,11 @@ class SoftwareTeam:
             review = await self._run_action(
                 self.code_reviewer,
                 "ReviewCode",
-                code=impl.get("implementation", {}).get("files", {})
+                code=impl.get("implementation", {}).get("code", ""),
+                context={
+                    "feature": impl.get("feature", "unknown"),
+                    "requirements": requirements_analysis
+                }
             )
             reviews.append(review)
             

@@ -1,0 +1,52 @@
+graph TD
+    %% Roles and Actions
+    PM[Project Manager]
+    ARCH[Architect]
+    TL[Tech Lead]
+    DEV[Developer]
+    QA[QA Engineer]
+
+    %% Initial Flow
+    START((Start)) --> PM
+    PM -->|AnalyzeRequirements| REQS[Requirements Analysis]
+    REQS -->|ReviewRequirements| ARCH
+    ARCH -->|CreateProjectStructure| STRUCT[Project Structure]
+
+    %% Development Flow
+    subgraph Development Cycle
+        STRUCT -->|ImplementFeature| DEV
+        DEV -->|ReviewCode| TL
+        TL -->|RunTests| QA
+        QA -->|ReviewIntegration| ARCH
+    end
+
+    %% Integration Issues Flow
+    ARCH -->|Issues Found| ISSUES{Integration Issues?}
+    ISSUES -->|Yes| PM_PLAN[PM: Plan Work]
+    ISSUES -->|No| DONE((Done))
+
+    %% Work Planning Flow
+    subgraph Work Planning
+        PM_PLAN -->|Create Work Items| SPRINT[Sprint Planning]
+        SPRINT -->|Assign Tasks| ROLES{Role Assignment}
+        ROLES -->|Tests| QA
+        ROLES -->|Implementation| DEV
+        ROLES -->|Review| TL
+    end
+
+    %% Artifacts
+    subgraph Artifacts
+        REQS -.-> DOCS[Documentation]
+        STRUCT -.-> DOCS
+        DEV -.-> CODE[Code]
+        TL -.-> REVIEW[Review Reports]
+        QA -.-> TESTS[Test Results]
+    end
+
+    %% Styling
+    classDef role fill:#f9f,stroke:#333,stroke-width:2px;
+    classDef artifact fill:#bbf,stroke:#333,stroke-width:1px;
+    classDef process fill:#bfb,stroke:#333,stroke-width:1px;
+    class PM,ARCH,TL,DEV,QA role;
+    class DOCS,CODE,REVIEW,TESTS artifact;
+    class REQS,STRUCT,SPRINT process;

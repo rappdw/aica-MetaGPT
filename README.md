@@ -22,6 +22,71 @@ AICA is an AI-powered coding assistant that helps generate and manage software p
   - Artifact generation and management
   - Clean workspace handling
 
+## Agent Workflow
+
+AICA uses a sophisticated multi-agent workflow to manage the software development process. View the [workflow diagram](workflow.mmd) directly or see it rendered below:
+
+```mermaid
+graph TD
+    %% Roles and Actions
+    PM[Project Manager]
+    ARCH[Architect]
+    TL[Tech Lead]
+    DEV[Developer]
+    QA[QA Engineer]
+
+    %% Initial Flow
+    START((Start)) --> PM
+    PM -->|AnalyzeRequirements| REQS[Requirements Analysis]
+    REQS -->|ReviewRequirements| ARCH
+    ARCH -->|CreateProjectStructure| STRUCT[Project Structure]
+
+    %% Development Flow
+    subgraph Development Cycle
+        STRUCT -->|ImplementFeature| DEV
+        DEV -->|ReviewCode| TL
+        TL -->|RunTests| QA
+        QA -->|ReviewIntegration| ARCH
+    end
+
+    %% Integration Issues Flow
+    ARCH -->|Issues Found| ISSUES{Integration Issues?}
+    ISSUES -->|Yes| PM_PLAN[PM: Plan Work]
+    ISSUES -->|No| DONE((Done))
+
+    %% Work Planning Flow
+    subgraph Work Planning
+        PM_PLAN -->|Create Work Items| SPRINT[Sprint Planning]
+        SPRINT -->|Assign Tasks| ROLES{Role Assignment}
+        ROLES -->|Tests| QA
+        ROLES -->|Implementation| DEV
+        ROLES -->|Review| TL
+    end
+
+    %% Artifacts
+    subgraph Artifacts
+        REQS -.-> DOCS[Documentation]
+        STRUCT -.-> DOCS
+        DEV -.-> CODE[Code]
+        TL -.-> REVIEW[Review Reports]
+        QA -.-> TESTS[Test Results]
+    end
+
+    %% Styling
+    classDef role fill:#f9f,stroke:#333,stroke-width:2px;
+    classDef artifact fill:#bbf,stroke:#333,stroke-width:1px;
+    classDef process fill:#bfb,stroke:#333,stroke-width:1px;
+    class PM,ARCH,TL,DEV,QA role;
+    class DOCS,CODE,REVIEW,TESTS artifact;
+    class REQS,STRUCT,SPRINT process;
+```
+
+The workflow shows how:
+1. Project Manager analyzes requirements and coordinates with the Architect
+2. Development cycle flows through Developer → Tech Lead → QA Engineer
+3. Integration issues are handled by creating new work items and feeding them back into the cycle
+4. Artifacts (documentation, code, reviews, test results) are generated throughout the process
+
 ## Installation
 
 ```bash

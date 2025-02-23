@@ -140,6 +140,101 @@ class ImplementFeature(Action):
         return self._parse_json_response(response)
 
 
+class PlanWork(Action):
+    """Plan and schedule work items."""
+    name: str = "PlanWork"
+    
+    async def run(
+        self,
+        work_items: List[Dict],
+        current_plan: Optional[Dict] = None
+    ) -> Dict:
+        """Plan and schedule work items based on dependencies and priorities."""
+        if not work_items:
+            return {
+                "plan": current_plan or {},
+                "input_tokens": 0,
+                "output_tokens": 0
+            }
+            
+        # Format work items for planning
+        items_summary = "\n".join(
+            f"- {item.get('title', 'Untitled')}: {item.get('priority', 'Unknown')} priority, {item.get('estimated_effort', '?')} points"
+            for item in work_items
+        )
+        
+        current_plan_summary = ""
+        if current_plan:
+            current_plan_summary = "\nCurrent plan:\n" + "\n".join(
+                f"- Sprint {sprint}: {', '.join(items)}"
+                for sprint, items in current_plan.get("sprints", {}).items()
+            )
+        
+        # Create planning prompt
+        prompt = f"""
+        You are a project manager planning work items.
+        
+        New work items to plan:
+        {items_summary}
+        {current_plan_summary}
+        
+        Create a plan that:
+        1. Groups work items into sprints based on dependencies
+        2. Balances effort across sprints (target ~10 points/sprint)
+        3. Prioritizes high priority items
+        4. Respects dependencies between items
+        
+        Format your response as JSON with:
+        - sprints: Dictionary mapping sprint numbers to lists of work item titles
+        - dependencies: Dictionary mapping work items to their dependencies
+        - effort_per_sprint: Dictionary mapping sprint numbers to total effort
+        
+        Example response:
+        {{
+            "sprints": {{
+                "1": ["Implement ConfigManager", "Add Basic Tests"],
+                "2": ["Implement CacheManager", "Add Integration Tests"]
+            }},
+            "dependencies": {{
+                "Add Integration Tests": ["Implement ConfigManager", "Implement CacheManager"]
+            }},
+            "effort_per_sprint": {{
+                "1": 8,
+                "2": 7
+            }}
+        }}
+        """
+        
+        result = await self._call_llm(prompt)
+        
+        # Extract response content
+        if isinstance(result, dict) and "response" in result:
+            response = result["response"]
+            if isinstance(response, str):
+                try:
+                    response = json.loads(response)
+                except json.JSONDecodeError:
+                    response = {
+                        "sprints": {},
+                        "dependencies": {},
+                        "effort_per_sprint": {}
+                    }
+        else:
+            response = result
+            
+        # Ensure response has all required fields
+        response.setdefault("sprints", {})
+        response.setdefault("dependencies", {})
+        response.setdefault("effort_per_sprint", {})
+        
+        # Add token counts
+        if isinstance(result, dict):
+            response["input_tokens"] = result.get("input_tokens", 0)
+            response["output_tokens"] = result.get("output_tokens", 0)
+        
+        return response
+
+
 class ReviewCode(Action):
     """Review code for quality and standards."""
     name: str = "ReviewCode"
@@ -208,6 +303,7 @@ class ReviewIntegration(Action):
                 "conflicts": [
                     "No implementations provided to review - batch_implementations is empty"
                 ],
+                "new_work_items": [],
                 "input_tokens": 0,
                 "output_tokens": 0
             }
@@ -236,19 +332,77 @@ class ReviewIntegration(Action):
         Requirements:
         {requirements}
         
-        Review the integration for:
+        Review the integration and provide:
         1. Dependencies between components
         2. Interface compatibility
         3. Architectural consistency
-        4. Potential conflicts
+        4. Missing components or implementations
+        5. Potential conflicts
         
-        Provide a detailed review in JSON format with:
+        If there are issues that prevent integration, DO NOT just list conflicts.
+        Instead, create new work items to address each issue. Each work item should include:
+        - title: Clear title describing the work
+        - description: Detailed description of what needs to be done
+        - priority: High/Medium/Low based on dependency and impact
+        - dependencies: List of other work items this depends on
+        - estimated_effort: Story points (1,2,3,5,8)
+        
+        Format your response as JSON with these keys:
         - approved: boolean indicating if integration can proceed
         - conflicts: list of any conflicts found
+        - new_work_items: list of work items to address issues
         - recommendations: list of suggestions for improving integration
+        
+        Example work item:
+        {{
+            "title": "Implement CacheManager",
+            "description": "Create CacheManager class to handle caching for GitMetricsCollector and DataProcessor...",
+            "priority": "High",
+            "dependencies": [],
+            "estimated_effort": 5
+        }}
         """
         
-        return await self._call_llm(prompt)
+        result = await self._call_llm(prompt)
+        
+        # Extract response content
+        if isinstance(result, dict) and "response" in result:
+            response = result["response"]
+            if isinstance(response, str):
+                try:
+                    response = json.loads(response)
+                except json.JSONDecodeError:
+                    response = {
+                        "approved": False,
+                        "conflicts": ["Failed to parse LLM response"],
+                        "new_work_items": [],
+                        "recommendations": []
+                    }
+        else:
+            response = result
+            
+        # Ensure response has all required fields
+        response.setdefault("approved", False)
+        response.setdefault("conflicts", [])
+        response.setdefault("new_work_items", [])
+        response.setdefault("recommendations", [])
+        
+        # If there are conflicts but no work items, create a generic work item
+        if response["conflicts"] and not response["new_work_items"]:
+            response["new_work_items"] = [{
+                "title": "Address Integration Issues",
+                "description": "Review and fix integration issues:\n" + "\n".join(f"- {c}" for c in response["conflicts"]),
+                "priority": "High",
+                "dependencies": [],
+                "estimated_effort": 5
+            }]
+        
+        # Add token counts
+        if isinstance(result, dict):
+            response["input_tokens"] = result.get("input_tokens", 0)
+            response["output_tokens"] = result.get("output_tokens", 0)
+        
+        return response
 
 
 class ReviewRequirements(Action):
