@@ -128,36 +128,42 @@ class Action(BaseModel):
             raise ValueError("LLM provider not set")
         
         try:
+            print(f"\n[DEBUG] _call_llm in {self.__class__.__name__}")
             response = await self.llm.aask(prompt)
             
             # Get token counts from the LLM provider
-            token_counts = {
-                "input_tokens": 0,
-                "output_tokens": 0
+            token_counts = self.llm.last_token_count if hasattr(self.llm, 'last_token_count') else {
+                "input_tokens": len(prompt.split()),  # Fallback to rough word count
+                "output_tokens": len(response.split())  # Fallback to rough word count
             }
-            if hasattr(self.llm, 'last_token_count'):
-                token_counts = self.llm.last_token_count
+            print(f"[DEBUG] Token counts from LLM: {token_counts}")
             
-            # Parse the response
-            result = self._parse_json_response(response)
+            # First try to parse as JSON
+            try:
+                result = self._parse_json_response(response)
+                if not isinstance(result, dict):
+                    result = {"response": result}
+            except Exception:
+                # If JSON parsing fails, wrap the raw response
+                result = {"response": response}
             
-            # Ensure result is a dictionary
-            if not isinstance(result, dict):
-                result = {
-                    "response": result,
-                    "input_tokens": token_counts.get("input_tokens", 0),
-                    "output_tokens": token_counts.get("output_tokens", 0)
-                }
-            else:
-                result["input_tokens"] = token_counts.get("input_tokens", 0)
-                result["output_tokens"] = token_counts.get("output_tokens", 0)
+            # Always add token counts
+            result["input_tokens"] = token_counts["input_tokens"]
+            result["output_tokens"] = token_counts["output_tokens"]
+            print(f"[DEBUG] Result with tokens in _call_llm: {result}")
             
             return result
+            
         except Exception as e:
+            # Even in error case, try to get token counts
+            token_counts = self.llm.last_token_count if hasattr(self.llm, 'last_token_count') else {
+                "input_tokens": len(prompt.split()),  # Fallback to rough word count
+                "output_tokens": 0  # No output on error
+            }
             return {
                 "error": str(e),
-                "input_tokens": 0,
-                "output_tokens": 0
+                "input_tokens": token_counts["input_tokens"],
+                "output_tokens": token_counts["output_tokens"]
             }
     
     def _parse_json_response(self, response: str) -> Any:
@@ -215,5 +221,31 @@ class Role(BaseModel):
             
         for action in self.actions:
             if action.name == action_name:
-                return await action.run(**kwargs)
+                print(f"\n[DEBUG] Role.run executing {action_name}")
+                result = await action.run(**kwargs)
+                print(f"[DEBUG] Initial result from action: {result}")
+                
+                # Ensure token counts are preserved
+                if isinstance(result, dict):
+                    # If token counts are missing, get them from the LLM provider
+                    if "input_tokens" not in result or "output_tokens" not in result:
+                        if not hasattr(self.llm, 'last_token_count'):
+                            raise ValueError(f"No token tracking available for action {action_name}")
+                        print(f"[DEBUG] Getting token counts from LLM: {self.llm.last_token_count}")
+                        result["input_tokens"] = self.llm.last_token_count["input_tokens"]
+                        result["output_tokens"] = self.llm.last_token_count["output_tokens"]
+                else:
+                    # If result is not a dict, wrap it with token counts
+                    if not hasattr(self.llm, 'last_token_count'):
+                        raise ValueError(f"No token tracking available for action {action_name}")
+                    print(f"[DEBUG] Getting token counts from LLM for non-dict: {self.llm.last_token_count}")
+                    result = {
+                        "response": result,
+                        "input_tokens": self.llm.last_token_count["input_tokens"],
+                        "output_tokens": self.llm.last_token_count["output_tokens"]
+                    }
+                
+                print(f"[DEBUG] Final result from Role.run: {result}")
+                return result
+                
         raise ValueError(f"Action {action_name} not found")

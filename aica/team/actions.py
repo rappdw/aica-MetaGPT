@@ -2,6 +2,7 @@
 
 from typing import Dict, List, Optional, Any
 from pydantic import BaseModel, ConfigDict
+import json
 
 from aica.core.base import Action, LLMProvider
 
@@ -39,32 +40,72 @@ class AnalyzeRequirements(Action):
 
 
 class CreateProjectStructure(Action):
-    """Create initial project structure with necessary files."""
+    """Create the initial project structure."""
+
     name: str = "CreateProjectStructure"
-    
+    description: str = "Create the initial project structure"
+
     async def run(self, specification: Dict) -> Dict:
         """Create project structure based on specification."""
-        prompt = f"""
-        You are a software architect designing the initial project structure.
+        print("\n[DEBUG] Starting CreateProjectStructure.run")
+        try:
+            prompt = f"""
+            You are a software architect designing the initial project structure.
+            
+            Specification:
+            {specification}
+            
+            Create a project structure including:
+            1. Directory layout
+            2. Key files and their purposes
+            3. Module organization
+            4. Dependencies and configuration
+            
+            Format your response as JSON with these keys:
+            - directories: List of directories to create
+            - files: List of files with their content
+            - dependencies: List of project dependencies
+            - configuration: Configuration settings
+            """
+            
+            print("[DEBUG] Calling LLM in CreateProjectStructure")
+            result = await self._call_llm(prompt)
+            print(f"[DEBUG] Result from LLM in CreateProjectStructure: {result}")
+            
+            # Validate token counts are present
+            if "input_tokens" not in result or "output_tokens" not in result:
+                raise ValueError("Token counts missing in CreateProjectStructure LLM result")
+            
+            # Keep the full result dict
+            if isinstance(result, dict) and "response" in result:
+                # Extract response content but keep it in a dict
+                response_content = result["response"]
+                if isinstance(response_content, str):
+                    try:
+                        response_content = json.loads(response_content)
+                    except json.JSONDecodeError:
+                        response_content = {"error": "Failed to parse response as JSON"}
+                
+                # Ensure response content is a dict
+                if not isinstance(response_content, dict):
+                    response_content = {"response": response_content}
+                
+                # Create new result with response content and preserve token counts
+                final_result = {
+                    **response_content,  # Response content at top level
+                    "input_tokens": result["input_tokens"],
+                    "output_tokens": result["output_tokens"]
+                }
+                print(f"[DEBUG] Final result from CreateProjectStructure: {final_result}")
+                return final_result
+            else:
+                # If result isn't a dict with response key, just return it
+                print(f"[DEBUG] Returning raw result: {result}")
+                return result
         
-        Specification:
-        {specification}
-        
-        Create a project structure including:
-        1. Directory layout
-        2. Key files and their purposes
-        3. Module organization
-        4. Dependencies and configuration
-        
-        Format your response as JSON with these keys:
-        - directories: List of directories to create
-        - files: List of files with their content
-        - dependencies: List of project dependencies
-        - configuration: Configuration settings
-        """
-        
-        response = await self._call_llm(prompt)
-        return self._parse_json_response(response)
+        except Exception as e:
+            print(f"[DEBUG] Error in CreateProjectStructure: {str(e)}")
+            raise
 
 
 class ImplementFeature(Action):
@@ -124,8 +165,29 @@ class ReviewCode(Action):
         - approved: Boolean indicating if code is approved
         """
         
-        response = await self._call_llm(prompt)
-        return self._parse_json_response(response)
+        result = await self._call_llm(prompt)
+        
+        # Parse response if needed
+        if isinstance(result, dict) and "response" in result:
+            response = result["response"]
+        else:
+            response = result
+            
+        # Ensure we have a dictionary response
+        if isinstance(response, str):
+            try:
+                response = json.loads(response)
+            except json.JSONDecodeError:
+                response = {"error": "Failed to parse response as JSON"}
+        
+        # Merge response with token tracking data
+        if isinstance(result, dict):
+            response.update({
+                k: v for k, v in result.items() 
+                if k in ["input_tokens", "output_tokens"]
+            })
+        
+        return response
 
 
 class ReviewIntegration(Action):
@@ -272,5 +334,26 @@ class RunTests(Action):
         - passed: Boolean indicating if all tests passed
         """
         
-        response = await self._call_llm(prompt)
-        return self._parse_json_response(response)
+        result = await self._call_llm(prompt)
+        
+        # Parse response if needed
+        if isinstance(result, dict) and "response" in result:
+            response = result["response"]
+        else:
+            response = result
+            
+        # Ensure we have a dictionary response
+        if isinstance(response, str):
+            try:
+                response = json.loads(response)
+            except json.JSONDecodeError:
+                response = {"error": "Failed to parse response as JSON"}
+        
+        # Merge response with token tracking data
+        if isinstance(result, dict):
+            response.update({
+                k: v for k, v in result.items() 
+                if k in ["input_tokens", "output_tokens"]
+            })
+        
+        return response

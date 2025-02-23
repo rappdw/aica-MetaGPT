@@ -73,47 +73,56 @@ class SoftwareTeam:
     
     def _track_tokens(self, action_name: str, role: str, input_tokens: int, output_tokens: int):
         """Track token usage for an action."""
+        # Update cumulative totals
         self.token_usage["input_tokens"] += input_tokens
         self.token_usage["output_tokens"] += output_tokens
+        
+        # Track per-action usage
         self.token_usage["actions"].append({
             "action": action_name,
             "role": role,
             "input_tokens": input_tokens,
-            "output_tokens": output_tokens
+            "output_tokens": output_tokens,
+            "total_tokens": input_tokens + output_tokens
         })
     
     async def _run_action(self, role: Any, action: str, **kwargs) -> Dict:
         """Run an action and track its token usage."""
         try:
             # Run the action
+            print(f"\n[DEBUG] SoftwareTeam._run_action starting {action}")
             start_time = datetime.now()
             result = await role.run(action, **kwargs)
             end_time = datetime.now()
+            print(f"[DEBUG] Result from role.run: {result}")
 
-            # Track token usage
-            input_tokens = 0
-            output_tokens = 0
+            # Validate token counts
+            if not isinstance(result, dict):
+                raise ValueError(f"Expected dict result from {action}, got {type(result)}")
+            if "input_tokens" not in result or "output_tokens" not in result:
+                raise ValueError(f"Token counts missing in result from {action}")
+            if result["input_tokens"] == 0 or result["output_tokens"] == 0:
+                raise ValueError(f"Zero token counts detected in result from {action}")
+
+            # Extract token counts
+            input_tokens = result["input_tokens"]
+            output_tokens = result["output_tokens"]
+            print(f"[DEBUG] Token counts: input={input_tokens}, output={output_tokens}")
             
-            # Extract token counts from result, handling both dict and non-dict cases
-            if isinstance(result, dict):
-                input_tokens = result.get("input_tokens", 0)
-                output_tokens = result.get("output_tokens", 0)
-            else:
-                # For non-dict responses, try to get token counts from response wrapper
-                response_wrapper = getattr(result, "__dict__", {})
-                input_tokens = response_wrapper.get("input_tokens", 0)
-                output_tokens = response_wrapper.get("output_tokens", 0)
+            # Remove token counts from result to avoid duplication
+            result.pop("input_tokens", None)
+            result.pop("output_tokens", None)
             
+            # Track tokens
             self._track_tokens(action, role.__class__.__name__, input_tokens, output_tokens)
-
-            # Log token usage
-            print(f"\nToken Usage for {action}:")
-            print(f"- Input tokens: {input_tokens}")
-            print(f"- Output tokens: {output_tokens}")
-            print(f"- Duration: {end_time - start_time}\n")
-
+            
+            # Add execution time 
+            result = result if isinstance(result, dict) else {"response": result}
+            result["execution_time"] = str(end_time - start_time)
+            
             return result
         except Exception as e:
+            print(f"[DEBUG] Error in _run_action for {action}: {str(e)}")
             # Even on error, try to track any tokens that were used
             if isinstance(e, dict):  # Some actions return error as dict
                 input_tokens = e.get("input_tokens", 0)
@@ -129,11 +138,34 @@ class SoftwareTeam:
         try:
             # Convert content to string if it's a dict
             if isinstance(content, dict):
+                # Remove any existing token information at root level
+                content.pop("input_tokens", None)
+                content.pop("output_tokens", None)
+                
+                # Add cumulative token usage
+                content["token_usage"] = {
+                    "input_tokens": self.token_usage["input_tokens"],
+                    "output_tokens": self.token_usage["output_tokens"],
+                    "total_tokens": self.token_usage["input_tokens"] + self.token_usage["output_tokens"],
+                    "actions": self.token_usage["actions"]
+                }
                 json_str = json.dumps(content, indent=2)
             else:
                 # Try to parse as JSON if it's a string
                 try:
                     data = json.loads(content)
+                    if isinstance(data, dict):
+                        # Remove any existing token information at root level
+                        data.pop("input_tokens", None)
+                        data.pop("output_tokens", None)
+                        
+                        # Add cumulative token usage
+                        data["token_usage"] = {
+                            "input_tokens": self.token_usage["input_tokens"],
+                            "output_tokens": self.token_usage["output_tokens"],
+                            "total_tokens": self.token_usage["input_tokens"] + self.token_usage["output_tokens"],
+                            "actions": self.token_usage["actions"]
+                        }
                     json_str = json.dumps(data, indent=2)
                 except json.JSONDecodeError:
                     # If not valid JSON, save as markdown
@@ -553,6 +585,28 @@ class SoftwareTeam:
             original_prompt=self.prompt
         )
 
+        # Architect validates technical implementation
+        arch_validation = await self._run_action(
+            self.architect,
+            "ReviewRequirements",
+            requirements=requirements_analysis,
+            implementation={
+                "core": core_implementation,
+                "features": implementations,
+                "test_results": test_results
+            },
+            original_prompt=self.prompt
+        )
+
+        # Save validation results regardless of outcome
+        validation_results = {
+            "business_validation": pm_validation,
+            "technical_validation": arch_validation,
+            "timestamp": datetime.now().isoformat(),
+            "status": "success"
+        }
+
+        # Check business validation
         if not pm_validation.get("approved", False):
             missing_reqs = pm_validation.get("missing_requirements", [])
             deviations = pm_validation.get("deviations", [])
@@ -572,24 +626,28 @@ class SoftwareTeam:
                     "\n\n".join(error_details)
                 )
             
+            validation_results["status"] = "failed"
+            validation_results["error"] = "Implementation does not fully satisfy business requirements"
+            validation_results["error_details"] = error_details
+            
+            # Save validation results before raising error
+            self._save_json_artifact(
+                "docs/validation_results.json",
+                validation_results
+            )
+            
+            # Save token usage statistics
+            self._save_json_artifact(
+                "docs/token_usage.json",
+                self.token_usage
+            )
+            
             raise ValueError(
                 "Implementation does not fully satisfy business requirements.\n" +
                 "\n".join(error_details)
             )
 
-        # Architect validates technical implementation
-        arch_validation = await self._run_action(
-            self.architect,
-            "ReviewRequirements",
-            requirements=requirements_analysis,
-            implementation={
-                "core": core_implementation,
-                "features": implementations,
-                "test_results": test_results
-            },
-            original_prompt=self.prompt
-        )
-
+        # Check technical validation
         if not arch_validation.get("approved", False):
             missing_reqs = arch_validation.get("missing_requirements", [])
             deviations = arch_validation.get("deviations", [])
@@ -609,29 +667,33 @@ class SoftwareTeam:
                     "\n\n".join(error_details)
                 )
             
+            validation_results["status"] = "failed"
+            validation_results["error"] = "Implementation does not meet technical requirements"
+            validation_results["error_details"] = error_details
+            
+            # Save validation results before raising error
+            self._save_json_artifact(
+                "docs/validation_results.json",
+                validation_results
+            )
+            
+            # Save token usage statistics
+            self._save_json_artifact(
+                "docs/token_usage.json",
+                self.token_usage
+            )
+            
             raise ValueError(
                 "Implementation does not meet technical requirements.\n" +
                 "\n".join(error_details)
             )
 
-        # Save validation results
+        # Save validation results for successful case
         self._save_json_artifact(
             "docs/validation_results.json",
-            {
-                "business_validation": pm_validation,
-                "technical_validation": arch_validation,
-                "timestamp": datetime.now().isoformat()
-            }
+            validation_results
         )
-
-        self._show_status(
-            "Validation Complete",
-            "✅ Implementation successfully validated:\n"
-            "- All business requirements satisfied\n"
-            "- Architecture and technical requirements met\n"
-            "- Test coverage and quality metrics achieved"
-        )
-
+        
         # Save token usage statistics
         self._save_json_artifact(
             "docs/token_usage.json",

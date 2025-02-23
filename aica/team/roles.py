@@ -58,14 +58,34 @@ class AnalyzeRequirements(Action):
         """
         try:
             result = await self._call_llm(prompt)
+            
+            # Extract token counts before modifying result
+            token_counts = {
+                "input_tokens": result.get("input_tokens", 0),
+                "output_tokens": result.get("output_tokens", 0)
+            }
+            
+            # Parse result if needed
             if isinstance(result, str):
                 result = json.loads(result)
-            return {"specification": result}
+            elif isinstance(result, dict):
+                # Remove token counts from inner result to avoid duplication
+                result.pop("input_tokens", None)
+                result.pop("output_tokens", None)
+            
+            # Return with token counts preserved
+            return {
+                "specification": result,
+                "input_tokens": token_counts["input_tokens"],
+                "output_tokens": token_counts["output_tokens"]
+            }
         except json.JSONDecodeError as e:
             return {
                 "specification": {
                     "error": f"Failed to parse specification: {str(e)}"
-                }
+                },
+                "input_tokens": 0,
+                "output_tokens": 0
             }
 
 
@@ -76,28 +96,17 @@ class CreateProjectStructure(Action):
     async def run(self, specification: Dict) -> Dict:
         """Create project structure based on specification."""
         prompt = f"""
-        Based on the following specification, create the initial project structure and files:
+        You are a software architect designing the initial project structure.
         
+        Specification:
         {specification}
         
-        Return your response as a JSON object with the following structure:
-        {{
-            "files": {{
-                "pyproject.toml": "content...",
-                "README.md": "content...",
-                ".gitignore": "content...",
-                ".pre-commit-config.yaml": "content...",
-                "src/package_name/__init__.py": "content...",
-                "tests/__init__.py": "content..."
-            }}
-        }}
-        
-        Include:
-        1. pyproject.toml with dependencies
-        2. README.md with setup and usage instructions
-        3. .gitignore file
-        4. Pre-commit configuration
-        5. Basic package structure
+        Create a project structure including:
+        1. Directory layout
+        2. Key files and their purposes
+        3. Module organization
+        4. Dependencies and configuration
+        5. Documentation structure
         6. Test directory structure
         7. License file
         8. Configuration file templates
@@ -107,17 +116,67 @@ class CreateProjectStructure(Action):
         Do not include any explanatory text before or after the JSON.
         """
         try:
+            print("\n[DEBUG] CreateProjectStructure.run in roles.py")
             result = await self._call_llm(prompt)
-            if isinstance(result, str):
-                result = json.loads(result)
-            return {"project_structure": result}
+            print(f"[DEBUG] Result from LLM: {result}")
+            
+            # Validate token counts are present
+            if "input_tokens" not in result or "output_tokens" not in result:
+                raise ValueError("Token counts missing in CreateProjectStructure LLM result")
+            
+            # Get token counts
+            token_counts = {
+                "input_tokens": result["input_tokens"],
+                "output_tokens": result["output_tokens"]
+            }
+            
+            # Get the response content
+            if isinstance(result, dict) and "response" in result:
+                response = result["response"]
+            else:
+                response = result
+                
+            # Parse response as JSON if needed
+            if isinstance(response, str):
+                try:
+                    response = json.loads(response)
+                except json.JSONDecodeError:
+                    response = {"error": "Failed to parse response as JSON"}
+            
+            # Ensure response is a dict
+            if not isinstance(response, dict):
+                response = {"response": response}
+            
+            # Add project_structure key but preserve token counts at top level
+            final_result = {
+                "project_structure": response,
+                "input_tokens": token_counts["input_tokens"],
+                "output_tokens": token_counts["output_tokens"]
+            }
+            
+            print(f"[DEBUG] Final result from CreateProjectStructure: {final_result}")
+            return final_result
+            
         except json.JSONDecodeError as e:
-            return {
+            # Even on error, try to preserve token counts
+            token_counts = result.get("token_counts", {
+                "input_tokens": 0,
+                "output_tokens": 0
+            }) if isinstance(result, dict) else {
+                "input_tokens": 0,
+                "output_tokens": 0
+            }
+            
+            error_result = {
                 "project_structure": {
                     "files": {},
                     "error": f"Failed to parse project structure: {str(e)}"
-                }
+                },
+                "input_tokens": token_counts["input_tokens"],
+                "output_tokens": token_counts["output_tokens"]
             }
+            print(f"[DEBUG] Error result: {error_result}")
+            return error_result
 
 
 class ImplementFeature(Action):
@@ -330,7 +389,8 @@ class Architect(BaseRole):
             profile="Senior software architect who designs system architecture",
             actions=[
                 CreateProjectStructure(),
-                ReviewIntegration()
+                ReviewIntegration(),
+                ReviewRequirements()  # Add ReviewRequirements for technical validation
             ]
         )
 
